@@ -2,7 +2,7 @@ name: astrbot_plugin_auto_accept_friend
 display_name: 自动同意好友申请、群聊邀请
 author: houyunfei666666-hue
 desc: 自动同意QQ好友申请。收到好友申请立即通过，零延迟；自动同意群聊邀请
-version: 1.4.0
+version: 1.6.0
 repo: https://github.com/houyunfei666666-hue/astrbot_plugin_auto_accept_friend
 astrbot_version: ">=4.0.0"
 support_platforms:
