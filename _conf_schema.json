@@ -16,7 +16,7 @@
     "accept_group_invite": {
       "type": "boolean",
       "title": "自动同意群聊邀请",
-      "description": "收到群聊邀请或入群申请立即同意，零延迟。",
+      "description": "收到群聊邀请立即同意，零延迟。",
       "default": true
     }
   },
