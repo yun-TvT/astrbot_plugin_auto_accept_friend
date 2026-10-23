@@ -2,22 +2,23 @@
 
 自动同意 QQ 好友申请、群聊邀请（AstrBot / aiocqhttp / NapCat / OneBot v11）。
 
-插件打开即工作：收到好友申请立即通过，收到群聊邀请立即同意。零延迟、零通知、零配置、零指令。
+插件打开即工作：收到好友申请立即通过，有人邀请菲比进群立即同意。零延迟、零通知、零配置、零指令。
 
 ---
 
 ## 功能
 
-| 事件 | 处理 |
-|---|---|
-| 好友申请 | 立即同意（`set_friend_add_request` approve=True）|
-| 群聊邀请 | 立即同意（`set_group_add_request` approve=True）|
-| 群成员申请入群 | 立即同意（sub_type=add）|
+| 事件 | request_type | sub_type | 处理 |
+|---|---|---|---|
+| 有人加机器人好友 | `friend` | — | ✅ 立即同意 |
+| 有人邀请机器人进群 | `group` | `invite` | ✅ 立即同意 |
+| 有人申请进入机器人管理的群 | `group` | `add` | ❌ 不处理，保持原样 |
 
-插件不做任何多余的事：
+插件只做上面两件事，其余一切不管：
 
 - 不发送任何通知
 - 不提供任何聊天指令
+- 不处理加群申请（`sub_type=add` 直接忽略）
 - 无黑白名单、无限流、无欢迎语、无延时
 
 ---
@@ -100,16 +101,16 @@ docker restart astrbot
 运行日志（stdout，看 `docker logs`）：
 
 ```
-[auto_accept_friend] loaded | enable=True accept_friend=True accept_group=True | 秒同意模式
+[auto_accept_friend] loaded | enable=True friend=True group_invite=True | 秒同意模式
 [auto_accept_friend] 已同意好友 123456789 ok=True ret={'status': 'ok', 'retcode': 0}
-[auto_accept_friend] 已同意群邀请 group=987654321 user=123456789 sub_type=invite ok=True ret={'status': 'ok', 'retcode': 0}
+[auto_accept_friend] 已同意群邀请 group=987654321 user=123456789 ok=True ret={'status': 'ok', 'retcode': 0}
 ```
 
 申请记录文件 `data/requests.jsonl`（每行一条 JSON）：
 
 ```json
-{"ts": 1761305000.1, "action": "accept", "qq": "123456789", "comment": "我是xx", "ok": true}
-{"ts": 1761305000.2, "action": "accept_group", "qq": "987654321", "group_id": "123456789", "sub_type": "invite", "comment": "", "ok": true}
+{"ts": 1761305000.1, "action": "accept_friend", "qq": "123456789", "comment": "我是xx", "ok": true}
+{"ts": 1761305000.2, "action": "accept_group_invite", "qq": "987654321", "group_id": "123456789", "sub_type": "invite", "comment": "", "ok": true}
 ```
 
 ---
@@ -135,7 +136,16 @@ docker restart astrbot
 2. 原始 OneBot 事件保存在 `event.message_obj.raw_message`，含 `post_type` / `request_type` / `sub_type` / `user_id` / `group_id` / `flag` / `comment`。
 3. 插件通过 `@event_message_type(EventMessageType.ALL)` + `@platform_adapter_type(PlatformAdapterType.AIOCQHTTP)` 拦截该事件。
 4. 按 `platform_id` 精确匹配适配器实例，取 `get_client()` 得到 CQHttp 客户端，调用 `call_action`。
-5. 去重键：好友 `{user_id}:{flag}`，群邀请 `G:{group_id}:{user_id}:{flag}`，集合超 2000 自动清空。
+5. 分支判定严格按 `request_type` 与 `sub_type`：
+   ```python
+   if request_type == "friend":                          # 好友申请
+       set_friend_add_request(flag, approve=True)
+   elif request_type == "group" and sub_type == "invite":  # 群邀请
+       set_group_add_request(flag, approve=True, sub_type="invite")
+   else:
+       return                                             # 其余一律忽略
+   ```
+6. 去重键：好友 `{user_id}:{flag}`，群邀请 `G:{group_id}:{user_id}:{flag}`，集合超 2000 自动清空。
 
 ---
 
@@ -143,7 +153,7 @@ docker restart astrbot
 
 - 插件同意**所有**好友申请，包括陌生人。这是设计意图，不是缺陷。
 - 插件同意**所有**群聊邀请，机器人可能被拉入任意群。这是设计意图。
-- 如需过滤，修改 `main.py` 中的 `on_request` 方法，在调用 `_call_action` 前加入判断。
+- 插件**不会**自动同意任何人加入机器人管理的群（`sub_type=add` 被忽略）。
 - 插件不上传任何数据、不含遥测、不访问外部网络。
 
 ---
@@ -174,6 +184,10 @@ docker restart astrbot
 **Q：日志报 `找不到客户端，无法调用 set_friend_add_request`？**
 
 `_get_client` 三级兜底都没找到可用适配器。检查 `platform_manager.platform_insts` 里是否有 aiocqhttp 实例，以及 `p.meta().id` 是否与 `event.get_platform_id()` 一致。
+
+**Q：有人申请进群，机器人不自动同意？**
+
+这是设计行为。本插件只处理「加机器人好友」和「邀请机器人进群」两类请求，不处理「他人申请进入机器人管理的群」（`sub_type=add`）。需要在 QQ 群里手动审批。
 
 **Q：能不能只同意特定 QQ？**
 
