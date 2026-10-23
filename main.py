@@ -1,14 +1,20 @@
-"""自动同意 QQ 好友申请 + 群聊邀请（aiocqhttp / NapCat OneBot v11）—— 极简版
+"""自动同意 QQ 好友申请 + 群聊邀请（aiocqhttp / NapCat OneBot v11）—— v1.6.0
 
-只做两件事：
-  1. 收到好友申请 → 立即同意
-  2. 收到群聊邀请 → 立即同意
+只处理两类 OneBot request 事件（依据 OneBot v11 规范）：
+
+  1. request_type=friend
+     好友申请：有人加菲比好友              → 立即同意
+
+  2. request_type=group, sub_type=invite
+     群聊邀请：有人邀请菲比进群            → 立即同意
+
+其余请求（含 sub_type=add 加群申请）一律忽略，不做任何动作。
+
 无指令、无通知、无延时、无黑白名单、无限流、无欢迎语。
 
-关闭方式（三选一）：
+关闭方式：
   1. AstrBot 面板 → 插件管理 → astrbot_plugin_auto_accept_friend → 禁用
   2. 把 data/config.json 里的 "enable" 改成 false，然后重启容器
-  3. 删掉插件目录后重启容器
 插件打开即工作，不需要任何指令。
 """
 import json
@@ -37,7 +43,7 @@ class AutoAcceptFriend(star.Star):
         self.cfg = self._load_cfg()
         self.processed: set = set()
         logger.info(
-            "[auto_accept_friend] loaded | enable=%s accept_friend=%s accept_group=%s | 秒同意模式",
+            "[auto_accept_friend] loaded | enable=%s friend=%s group_invite=%s | 秒同意模式",
             self.cfg.get("enable", True),
             self.cfg.get("accept_friend", True),
             self.cfg.get("accept_group_invite", True),
@@ -58,15 +64,16 @@ class AutoAcceptFriend(star.Star):
                 with open(self.cfg_path, encoding="utf-8") as f:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
-                    # 兼容旧版键名：reject_group_invite=true 等价于 accept_group_invite=false
+                    # 兼容 v1.1.x 旧键名：reject_group_invite=true → accept_group_invite=false
                     if "reject_group_invite" in loaded and "accept_group_invite" not in loaded:
-                        loaded["accept_group_invite"] = not bool(loaded.pop("reject_group_invite"))
+                        loaded["accept_group_invite"] = not bool(
+                            loaded.pop("reject_group_invite")
+                        )
+                    # 丢弃已废弃的加群申请开关（v1.5.0 短暂存在过）
+                    loaded.pop("accept_group_join_request", None)
                     cfg.update(loaded)
-                with open(self.cfg_path, "w", encoding="utf-8") as f:
-                    json.dump(cfg, f, ensure_ascii=False, indent=2)
-            else:
-                with open(self.cfg_path, "w", encoding="utf-8") as f:
-                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+            with open(self.cfg_path, "w", encoding="utf-8") as f:
+                json.dump(cfg, f, ensure_ascii=False, indent=2)
         except Exception as e:
             logger.error(f"[auto_accept_friend] 配置读写失败: {e}")
         return cfg
@@ -134,6 +141,18 @@ class AutoAcceptFriend(star.Star):
             logger.error(f"[auto_accept_friend] 调用 {action} 失败: {e}")
             return None
 
+    def _dedup(self, key: str) -> bool:
+        """返回 True 表示已处理过（应跳过）"""
+        if key in self.processed:
+            return True
+        self.processed.add(key)
+        if len(self.processed) > 2000:
+            self.processed.clear()
+        return False
+
+    def _ok(self, ret: Any) -> bool:
+        return not (isinstance(ret, dict) and str(ret.get("status")) == "failed")
+
     # ---------------- 主处理 ----------------
     @platform_adapter_type(PlatformAdapterType.AIOCQHTTP)
     @event_message_type(EventMessageType.ALL)
@@ -148,8 +167,8 @@ class AutoAcceptFriend(star.Star):
             return
 
         try:
-            sub_type = str(raw.get("sub_type", "") or "")
             request_type = str(raw.get("request_type", "") or "")
+            sub_type = str(raw.get("sub_type", "") or "")
             user_id = str(raw.get("user_id", "") or "")
             group_id = str(raw.get("group_id", "") or "")
             comment = str(raw.get("comment", "") or "")
@@ -160,80 +179,83 @@ class AutoAcceptFriend(star.Star):
         if not flag:
             return
 
-        if not self.cfg.get("enable", True):
-            logger.info(
-                f"[auto_accept_friend] 开关关闭，忽略 request_type={request_type} sub_type={sub_type} user={user_id}"
-            )
-            return
-
-        is_friend = request_type == "friend" or sub_type == "add"
-        is_group = request_type == "group" or sub_type == "invite"
-
-        # ---- 群聊邀请：立即同意 ----
-        if is_group and not is_friend:
-            if not self.cfg.get("accept_group_invite", True):
+        # ======== 分支 A：好友申请（request_type=friend，无 group_id）========
+        if request_type == "friend":
+            if not self.cfg.get("enable", True):
                 logger.info(
-                    f"[auto_accept_friend] 群邀请同意已关闭，忽略 group={group_id} user={user_id}"
+                    f"[auto_accept_friend] 开关关闭，忽略好友申请 user={user_id}"
                 )
                 return
-            dedup_g = f"G:{group_id}:{user_id}:{flag}"
-            if dedup_g in self.processed:
+            if not self.cfg.get("accept_friend", True):
+                logger.info(f"[auto_accept_friend] 好友同意已关闭，忽略 {user_id}")
                 return
-            self.processed.add(dedup_g)
-            if len(self.processed) > 2000:
-                self.processed.clear()
-            st = sub_type if sub_type in ("invite", "add") else "invite"
+            if self._dedup(f"{user_id}:{flag}"):
+                return
+
             ret = await self._call_action(
-                event,
-                "set_group_add_request",
-                flag=flag,
-                approve=True,
-                sub_type=st,
+                event, "set_friend_add_request", flag=flag, approve=True
             )
-            ok = not (isinstance(ret, dict) and str(ret.get("status")) == "failed")
+            ok = self._ok(ret)
             logger.info(
-                f"[auto_accept_friend] 已同意群邀请 group={group_id} user={user_id} sub_type={st} ok={ok} ret={ret}"
+                f"[auto_accept_friend] 已同意好友 {user_id} ok={ok} ret={ret}"
             )
             self._append_log(
                 {
                     "ts": time.time(),
-                    "action": "accept_group",
+                    "action": "accept_friend",
                     "qq": user_id,
-                    "group_id": group_id,
-                    "sub_type": st,
                     "comment": comment,
                     "ok": ok,
                 }
             )
             return
 
-        # ---- 好友申请：秒同意 ----
-        if not is_friend:
-            return
-        if not self.cfg.get("accept_friend", True):
-            logger.info(f"[auto_accept_friend] 好友同意已关闭，忽略 {user_id}")
+        # ======== 分支 B：群邀请（request_type=group, sub_type=invite）========
+        if request_type == "group" and sub_type == "invite":
+            if not self.cfg.get("enable", True):
+                logger.info(
+                    f"[auto_accept_friend] 开关关闭，忽略群邀请 "
+                    f"group={group_id} user={user_id}"
+                )
+                return
+            if not self.cfg.get("accept_group_invite", True):
+                logger.info(
+                    f"[auto_accept_friend] 群邀请同意已关闭，忽略 "
+                    f"group={group_id} user={user_id}"
+                )
+                return
+            if self._dedup(f"G:{group_id}:{user_id}:{flag}"):
+                return
+
+            ret = await self._call_action(
+                event,
+                "set_group_add_request",
+                flag=flag,
+                approve=True,
+                sub_type="invite",
+            )
+            ok = self._ok(ret)
+            logger.info(
+                f"[auto_accept_friend] 已同意群邀请 group={group_id} "
+                f"user={user_id} ok={ok} ret={ret}"
+            )
+            self._append_log(
+                {
+                    "ts": time.time(),
+                    "action": "accept_group_invite",
+                    "qq": user_id,
+                    "group_id": group_id,
+                    "sub_type": "invite",
+                    "comment": comment,
+                    "ok": ok,
+                }
+            )
             return
 
-        dedup = f"{user_id}:{flag}"
-        if dedup in self.processed:
-            return
-        self.processed.add(dedup)
-        if len(self.processed) > 2000:
-            self.processed.clear()
-
-        ret = await self._call_action(
-            event, "set_friend_add_request", flag=flag, approve=True
+        # ======== 其余请求（含 sub_type=add 加群申请）一律忽略 ========
+        logger.debug(
+            f"[auto_accept_friend] 忽略未处理的请求 "
+            f"request_type={request_type!r} sub_type={sub_type!r} "
+            f"user={user_id} group={group_id}"
         )
-        ok = not (isinstance(ret, dict) and str(ret.get("status")) == "failed")
-        logger.info(
-            f"[auto_accept_friend] 已同意好友 {user_id} ok={ok} ret={ret}"
-        )
-        self._append_log(
-            {
-                "ts": time.time(),
-                "action": "accept",
-                "qq": user_id,
-                "comment": comment,
-                "ok": ok,
-            }
-        )
+        return
