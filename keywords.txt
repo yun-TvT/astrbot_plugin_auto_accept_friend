@@ -1,0 +1,2 @@
+# AstrBot Plugin
+QQ 好友申请 群聊邀请 自动同意 自动通过 aiocqhttp napcat onebot 秒同意 friend request group invite auto accept
