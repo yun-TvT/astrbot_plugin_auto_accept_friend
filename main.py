@@ -1,14 +1,11 @@
-"""自动同意 QQ 好友申请 + 群聊邀请（aiocqhttp / NapCat OneBot v11）—— v1.6.0
+"""自动同意 QQ 好友申请 + 群聊邀请（aiocqhttp / NapCat OneBot v11）—— v1.6.1
 
-只处理两类 OneBot request 事件（依据 OneBot v11 规范）：
+本插件只有两个功能：
 
-  1. request_type=friend
-     好友申请：有人加菲比好友              → 立即同意
+  1. 有人加机器人好友        → 立即同意
+  2. 有人邀请机器人进群      → 立即同意
 
-  2. request_type=group, sub_type=invite
-     群聊邀请：有人邀请菲比进群            → 立即同意
-
-其余请求（含 sub_type=add 加群申请）一律忽略，不做任何动作。
+除此之外不处理任何其他请求。
 
 无指令、无通知、无延时、无黑白名单、无限流、无欢迎语。
 
@@ -64,13 +61,14 @@ class AutoAcceptFriend(star.Star):
                 with open(self.cfg_path, encoding="utf-8") as f:
                     loaded = json.load(f)
                 if isinstance(loaded, dict):
-                    # 兼容 v1.1.x 旧键名：reject_group_invite=true → accept_group_invite=false
-                    if "reject_group_invite" in loaded and "accept_group_invite" not in loaded:
+                    # 兼容旧版键名：reject_group_invite=true → accept_group_invite=false
+                    if (
+                        "reject_group_invite" in loaded
+                        and "accept_group_invite" not in loaded
+                    ):
                         loaded["accept_group_invite"] = not bool(
                             loaded.pop("reject_group_invite")
                         )
-                    # 丢弃已废弃的加群申请开关（v1.5.0 短暂存在过）
-                    loaded.pop("accept_group_join_request", None)
                     cfg.update(loaded)
             with open(self.cfg_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -179,7 +177,7 @@ class AutoAcceptFriend(star.Star):
         if not flag:
             return
 
-        # ======== 分支 A：好友申请（request_type=friend，无 group_id）========
+        # ---- 功能一：加好友申请 → 立即同意 ----
         if request_type == "friend":
             if not self.cfg.get("enable", True):
                 logger.info(
@@ -210,7 +208,7 @@ class AutoAcceptFriend(star.Star):
             )
             return
 
-        # ======== 分支 B：群邀请（request_type=group, sub_type=invite）========
+        # ---- 功能二：邀请机器人进群 → 立即同意 ----
         if request_type == "group" and sub_type == "invite":
             if not self.cfg.get("enable", True):
                 logger.info(
@@ -252,10 +250,5 @@ class AutoAcceptFriend(star.Star):
             )
             return
 
-        # ======== 其余请求（含 sub_type=add 加群申请）一律忽略 ========
-        logger.debug(
-            f"[auto_accept_friend] 忽略未处理的请求 "
-            f"request_type={request_type!r} sub_type={sub_type!r} "
-            f"user={user_id} group={group_id}"
-        )
+        # ---- 其他请求：不处理 ----
         return
