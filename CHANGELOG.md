@@ -2,6 +2,37 @@
 
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0] - 2026-10-24
+
+### Removed
+- **删除「加群申请自动同意」功能**（`sub_type=add` 分支整段移除）
+- 删除配置项 `accept_group_join_request`
+
+### Changed
+- 分支判定重写为严格匹配 `request_type` + `sub_type`：
+  ```python
+  if request_type == "friend":                           # 好友申请
+  elif request_type == "group" and sub_type == "invite":  # 群邀请
+  else: return                                            # 其余一律忽略
+  ```
+- 修复 v1.4.0 的逻辑缺陷：原 `is_friend = ... or sub_type == "add"` 会把加群申请误判为好友申请，导致调用错误的 OneBot API
+- 日志中 `action` 字段改为明确值：`accept_friend` / `accept_group_invite`
+
+### Scope
+本插件只处理两类请求：
+1. 有人加机器人好友 → 立即同意
+2. 有人邀请机器人进群 → 立即同意
+
+其他请求（包括他人申请进入机器人管理的群）**一律忽略**。
+
+## [1.5.0] - 2026-10-24
+
+### Added
+- 加群申请分支（`sub_type=add`）与 `accept_group_join_request` 开关（默认关闭）
+
+### Fixed
+- 修复 `sub_type=add` 被误判为好友申请的问题
+
 ## [1.4.0] - 2026-10-24
 
 ### Changed
